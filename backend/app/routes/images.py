@@ -1,7 +1,8 @@
+import os
 from fastapi import APIRouter, HTTPException, Query, status
 from typing import List, Optional
-from app.database.images import db_get_all_images
-from app.schemas.images import ErrorResponse
+from app.database.images import db_get_all_images, db_get_image_path_by_id
+from app.schemas.images import ErrorResponse, RenameImageRequest, RenameImageResponse
 from app.utils.images import image_util_parse_metadata
 from pydantic import BaseModel
 from app.database.images import db_toggle_image_favourite_status
@@ -128,3 +129,99 @@ class ImageInfoResponse(BaseModel):
     isTagged: bool
     isFavourite: bool
     tags: Optional[List[str]] = None
+
+
+@router.put(
+    "/rename-image",
+    response_model=RenameImageResponse,
+    responses={code: {"model": ErrorResponse} for code in [400, 404, 500]},
+)
+def rename_image(request: RenameImageRequest):
+    """
+    Rename an image file on disk based on its image ID.
+
+    The database record is updated separately by the sync microservice.
+    """
+    try:
+        image_id = request.image_id.strip()
+        new_name = request.rename.strip()
+
+        if not image_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ErrorResponse(
+                    success=False,
+                    error="Validation Error",
+                    message="Image ID cannot be empty",
+                ).model_dump(),
+            )
+
+        if not new_name:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ErrorResponse(
+                    success=False,
+                    error="Validation Error",
+                    message="New image name cannot be empty",
+                ).model_dump(),
+            )
+
+        # Disallow filesystem separators and common invalid characters (especially on Windows),
+        # plus a few extra characters that are prone to shell/filesystem issues.
+        invalid_chars = set('<>:"/\\\\|?*!^')
+        if any(ch in invalid_chars for ch in new_name):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ErrorResponse(
+                    success=False,
+                    error="Validation Error",
+                    message="New image name contains invalid characters.",
+                ).model_dump(),
+            )
+
+        image_path = db_get_image_path_by_id(image_id)
+        if not image_path:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=ErrorResponse(
+                    success=False,
+                    error="Image Not Found",
+                    message=f"Image with ID '{image_id}' does not exist.",
+                ).model_dump(),
+            )
+
+        folder_path = os.path.dirname(image_path)
+        extension = os.path.splitext(image_path)[1]
+        new_file_path = os.path.join(folder_path, new_name + extension)
+
+        # Avoid overwriting an existing file with the same name.
+        if os.path.exists(new_file_path):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ErrorResponse(
+                    success=False,
+                    error="File Exists",
+                    message="A file with the new name already exists.",
+                ).model_dump(),
+            )
+
+        os.rename(image_path, new_file_path)
+
+        return RenameImageResponse(
+            success=True,
+            message=f"Successfully renamed image to '{new_name}{extension}'",
+        )
+
+    except HTTPException as e:
+        # Re-raise HTTPExceptions to preserve their status codes and details.
+        raise e
+    except Exception as e:
+        logger.error(f"Error renaming image: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ErrorResponse(
+                success=False,
+                error="Internal server error",
+                message=f"Unable to rename image: {str(e)}",
+            ).model_dump(),
+        )

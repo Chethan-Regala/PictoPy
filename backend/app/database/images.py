@@ -261,6 +261,30 @@ def db_get_all_images(tagged: Union[bool, None] = None) -> List[dict]:
         conn.close()
 
 
+def db_get_image_path_by_id(image_id: ImageId) -> Optional[ImagePath]:
+    """
+    Get the filesystem path for a single image by its ID.
+
+    Args:
+        image_id: ID of the image to look up
+
+    Returns:
+        The image path as a string, or None if the image is not found or an error occurs.
+    """
+    conn = _connect()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute("SELECT path FROM images WHERE id = ?", (image_id,))
+        row = cursor.fetchone()
+        return row[0] if row else None
+    except Exception as e:
+        logger.error(f"Error getting image path for id {image_id}: {e}")
+        return None
+    finally:
+        conn.close()
+
+
 def db_get_untagged_images() -> List[UntaggedImageRecord]:
     """
     Find all images that need AI tagging.
