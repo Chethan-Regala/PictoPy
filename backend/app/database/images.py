@@ -78,6 +78,18 @@ def db_create_images_table() -> None:
     """
     )
 
+    # Ensure Memories feature columns exist on older databases
+    cursor.execute("PRAGMA table_info(images)")
+    existing_columns = {row[1] for row in cursor.fetchall()}
+
+    for column_name, column_type in [
+        ("latitude", "REAL"),
+        ("longitude", "REAL"),
+        ("captured_at", "DATETIME"),
+    ]:
+        if column_name not in existing_columns:
+            cursor.execute(f"ALTER TABLE images ADD COLUMN {column_name} {column_type}")
+
     # Create indexes for Memories feature queries
     cursor.execute("CREATE INDEX IF NOT EXISTS ix_images_latitude ON images(latitude)")
     cursor.execute(
