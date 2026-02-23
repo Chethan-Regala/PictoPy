@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { open } from '@tauri-apps/plugin-shell';
 import {
@@ -34,6 +34,16 @@ export const MediaInfoPanel: React.FC<MediaInfoPanelProps> = ({
   const [newName, setNewName] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+   const [renamedName, setRenamedName] = useState<string | null>(null);
+
+  useEffect(() => {
+    // Reset rename state when the current image changes
+    setIsRenaming(false);
+    setNewName('');
+    setError(null);
+    setIsSaving(false);
+    setRenamedName(null);
+  }, [currentImage?.id]);
 
   const getFormattedDate = () => {
     if (currentImage?.metadata?.date_created) {
@@ -55,20 +65,23 @@ export const MediaInfoPanel: React.FC<MediaInfoPanelProps> = ({
   }, [currentImage]);
 
   const getBaseName = useCallback(() => {
-    const fileName = getFileName();
+    const fileName = renamedName || getFileName();
     const lastDotIndex = fileName.lastIndexOf('.');
     if (lastDotIndex <= 0) return fileName;
     return fileName.substring(0, lastDotIndex);
   }, [getFileName]);
 
   const getExtension = useCallback(() => {
-    const fileName = getFileName();
+    const fileName = renamedName || getFileName();
     const lastDotIndex = fileName.lastIndexOf('.');
     if (lastDotIndex === -1 || lastDotIndex === fileName.length - 1) return '';
     return fileName.substring(lastDotIndex);
   }, [getFileName]);
 
-  const displayName = useMemo(() => getFileName(), [getFileName]);
+  const displayName = useMemo(
+    () => renamedName || getFileName(),
+    [renamedName, getFileName],
+  );
 
   const handleLocationClick = async () => {
     if (currentImage?.metadata?.latitude && currentImage?.metadata?.longitude) {
@@ -101,13 +114,19 @@ export const MediaInfoPanel: React.FC<MediaInfoPanelProps> = ({
     try {
       setIsSaving(true);
       setError(null);
-      await renameImageApi(currentImage.id, newName.trim());
+      const trimmed = newName.trim();
+      await renameImageApi(currentImage.id, trimmed);
+      const fullName = `${trimmed}${getExtension()}`;
+      setRenamedName(fullName);
       setIsRenaming(false);
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const maybeAxiosError = e as {
+        response?: { data?: { detail?: { message?: string }; message?: string } };
+      };
       const message =
-        e?.response?.data?.detail?.message ||
-        e?.response?.data?.message ||
-        'Failed to rename image.';
+        maybeAxiosError.response?.data?.detail?.message ||
+        maybeAxiosError.response?.data?.message ||
+        (e instanceof Error ? e.message : 'Failed to rename image.');
       setError(message);
     } finally {
       setIsSaving(false);
